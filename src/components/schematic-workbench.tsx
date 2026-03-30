@@ -34,6 +34,10 @@ interface ViewerRenderer {
   keyboardControls?: {
     setKeybinds?: (keybinds: Partial<{ up: string; down: string }>) => void;
   };
+  packs?: {
+    removeAllPacks?: () => Promise<void>;
+    loadPackFromBlob?: (blob: Blob, name?: string) => Promise<string>;
+  };
 }
 
 interface SchematicRendererModule {
@@ -55,6 +59,7 @@ const DEFAULT_RESOURCE_PACKS: Record<string, () => Promise<Blob>> = {
     return response.blob();
   },
 };
+let defaultResourcePackBlobPromise: Promise<Blob> | null = null;
 
 export function SchematicWorkbench() {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -372,6 +377,11 @@ function SchematicScene({
             enableSMAA: false,
             enableGamma: false,
           },
+          definitionRegionOptions: {
+            showOnLoad: false,
+            showEdges: false,
+            showLabels: false,
+          },
           sidebarOptions: { enabled: false },
           keyboardControlsOptions: {
             keybinds: {
@@ -393,6 +403,7 @@ function SchematicScene({
           throw new Error("Renderer did not finish initialization.");
         }
 
+        await resetToDefaultResourcePack(renderer);
         applyFlyKeybinds(renderer);
 
         await renderer.schematicManager.loadSchematic(
@@ -520,6 +531,30 @@ async function waitForRendererInitialization(readyPromise: Promise<void>, timeou
       window.clearTimeout(timeoutId);
     }
   }
+}
+
+async function getDefaultResourcePackBlob() {
+  if (!defaultResourcePackBlobPromise) {
+    defaultResourcePackBlobPromise = (async () => {
+      const response = await fetch("/resourcepacks/minecraft-default-pack.zip");
+      if (!response.ok) {
+        throw new Error(`Failed to fetch default resource pack (${response.status}).`);
+      }
+      return response.blob();
+    })();
+  }
+  return defaultResourcePackBlobPromise;
+}
+
+async function resetToDefaultResourcePack(renderer: ViewerRenderer) {
+  const packs = renderer.packs;
+  if (!packs?.removeAllPacks || !packs?.loadPackFromBlob) {
+    return;
+  }
+
+  await packs.removeAllPacks();
+  const packBlob = await getDefaultResourcePackBlob();
+  await packs.loadPackFromBlob(packBlob, "minecraft-default-v2");
 }
 
 function getViewerErrorMessage(renderError: unknown): string {
