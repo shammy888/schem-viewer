@@ -360,11 +360,18 @@ function SchematicScene({
           enableDragAndDrop: false,
           singleSchematicMode: true,
           enableProgressBar: false,
-          showGrid: true,
+          showGrid: false,
           showAxes: false,
-          targetFPS: 60,
-          idleFPS: 30,
+          targetFPS: 36,
+          idleFPS: 2,
+          idleThreshold: 80,
           enableAdaptiveFPS: true,
+          postProcessingOptions: {
+            enabled: false,
+            enableSSAO: false,
+            enableSMAA: false,
+            enableGamma: false,
+          },
           sidebarOptions: { enabled: false },
           keyboardControlsOptions: {
             keybinds: {
