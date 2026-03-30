@@ -592,6 +592,10 @@ function toInteger(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) {
     return Math.trunc(value);
   }
+  if (value instanceof Number) {
+    const numeric = Number(value.valueOf());
+    return Number.isFinite(numeric) ? Math.trunc(numeric) : null;
+  }
   if (typeof value === "bigint") {
     return Number(value);
   }
