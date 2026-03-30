@@ -2,6 +2,7 @@ import { read } from "nbtify";
 
 export type SchematicFormat =
   | "sponge-schematic"
+  | "litematic"
   | "structure-nbt"
   | "legacy-schematic";
 
@@ -100,6 +101,10 @@ export async function parseSchematicFile(file: File): Promise<ParsedSchematic> {
     return parseSpongeSchematic(file.name, root);
   }
 
+  if (looksLikeLitematic(root)) {
+    return parseLitematic(file.name, root);
+  }
+
   if (looksLikeStructureNbt(root)) {
     return parseStructureNbt(file.name, root);
   }
@@ -108,14 +113,14 @@ export async function parseSchematicFile(file: File): Promise<ParsedSchematic> {
     return parseLegacySchematic(file.name, root);
   }
 
-  if (!["schem", "schematic", "nbt"].includes(extension)) {
+  if (!["schem", "schematic", "nbt", "litematic"].includes(extension)) {
     throw new Error(
-      `Unsupported file extension ".${extension}". Supported types are .schem, .schematic, and .nbt.`,
+      `Unsupported file extension ".${extension}". Supported types are .schem, .litematic, .schematic, and .nbt.`,
     );
   }
 
   throw new Error(
-    `Unsupported schematic layout in "${file.name}". This viewer currently supports Sponge .schem, structure .nbt, and legacy .schematic files.`,
+    `Unsupported schematic layout in "${file.name}". This viewer currently supports Sponge .schem, Litematic .litematic, structure .nbt, and legacy .schematic files.`,
   );
 }
 
@@ -195,6 +200,135 @@ function parseSpongeSchematic(fileName: string, root: NbtCompound): ParsedSchema
     "Sponge .schem",
     { width, height, length },
     paletteByIndex.size,
+    voxels,
+    warnings,
+  );
+}
+
+function parseLitematic(fileName: string, root: NbtCompound): ParsedSchematic {
+  const regionsTag = root.Regions;
+  if (!isCompound(regionsTag)) {
+    throw new Error(`"${fileName}" is missing a valid Regions field.`);
+  }
+
+  const regionEntries = Object.entries(regionsTag).filter(([, region]) => isCompound(region));
+  if (regionEntries.length === 0) {
+    throw new Error(`"${fileName}" has no readable regions.`);
+  }
+
+  const warnings: string[] = [];
+  const worldVoxels: Array<{ x: number; y: number; z: number; state: string; material: string }> =
+    [];
+  const paletteStates = new Set<string>();
+
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let minZ = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  let maxZ = Number.NEGATIVE_INFINITY;
+
+  for (const [regionName, regionValue] of regionEntries) {
+    const region = regionValue as NbtCompound;
+
+    const position = toPositionTriplet(region.Position);
+    const size = toPositionTriplet(region.Size);
+    if (!position || !size) {
+      warnings.push(`Skipped region "${regionName}" because Position/Size was invalid.`);
+      continue;
+    }
+
+    const [positionX, positionY, positionZ] = position;
+    const [sizeX, sizeY, sizeZ] = size;
+    const width = Math.abs(sizeX);
+    const height = Math.abs(sizeY);
+    const length = Math.abs(sizeZ);
+
+    if (width === 0 || height === 0 || length === 0) {
+      warnings.push(`Skipped region "${regionName}" because one dimension was 0.`);
+      continue;
+    }
+
+    const startX = positionX + (sizeX < 0 ? sizeX + 1 : 0);
+    const startY = positionY + (sizeY < 0 ? sizeY + 1 : 0);
+    const startZ = positionZ + (sizeZ < 0 ? sizeZ + 1 : 0);
+
+    minX = Math.min(minX, startX);
+    minY = Math.min(minY, startY);
+    minZ = Math.min(minZ, startZ);
+    maxX = Math.max(maxX, startX + width - 1);
+    maxY = Math.max(maxY, startY + height - 1);
+    maxZ = Math.max(maxZ, startZ + length - 1);
+
+    const paletteTag = region.BlockStatePalette;
+    const blockStatesTag = region.BlockStates;
+    if (!Array.isArray(paletteTag)) {
+      warnings.push(`Skipped region "${regionName}" because BlockStatePalette was invalid.`);
+      continue;
+    }
+
+    const packedLongs = toLongArray(blockStatesTag);
+    if (!packedLongs) {
+      warnings.push(`Skipped region "${regionName}" because BlockStates was invalid.`);
+      continue;
+    }
+
+    const palette = paletteTag.map((entry, index) => parseBlockStateEntry(entry, index));
+    for (const state of palette) {
+      paletteStates.add(state);
+    }
+
+    const bitsPerBlock = Math.max(2, Math.ceil(Math.log2(Math.max(1, palette.length))));
+    const volume = width * height * length;
+    const indices = decodePackedLongArray(packedLongs, bitsPerBlock, volume);
+
+    for (let y = 0, index = 0; y < height; y += 1) {
+      for (let z = 0; z < length; z += 1) {
+        for (let x = 0; x < width; x += 1, index += 1) {
+          const stateIndex = indices[index] ?? 0;
+          const state = palette[stateIndex] ?? `unknown:${stateIndex}`;
+          const material = extractMaterial(state);
+
+          if (isAir(material)) {
+            continue;
+          }
+
+          worldVoxels.push({
+            x: startX + x,
+            y: startY + y,
+            z: startZ + z,
+            state,
+            material,
+          });
+        }
+      }
+    }
+  }
+
+  if (!Number.isFinite(minX) || !Number.isFinite(maxX)) {
+    throw new Error(`"${fileName}" had no valid regions that could be parsed.`);
+  }
+
+  const dimensions: SchematicDimensions = {
+    width: maxX - minX + 1,
+    height: maxY - minY + 1,
+    length: maxZ - minZ + 1,
+  };
+
+  const voxels: SchematicVoxel[] = worldVoxels.map((entry) => ({
+    x: entry.x - minX,
+    y: entry.y - minY,
+    z: entry.z - minZ,
+    state: entry.state,
+    material: entry.material,
+  }));
+
+  return finalizeParsed(
+    fileName,
+    "litematic",
+    "Litematic .litematic",
+    dimensions,
+    paletteStates.size,
     voxels,
     warnings,
   );
@@ -393,6 +527,28 @@ function looksLikeSpongeSchematic(root: NbtCompound): boolean {
   );
 }
 
+function looksLikeLitematic(root: NbtCompound): boolean {
+  if (!isCompound(root.Regions)) {
+    return false;
+  }
+
+  if (toInteger(root.Version) === null && !isCompound(root.Metadata)) {
+    return false;
+  }
+
+  const firstRegion = Object.values(root.Regions).find((entry) => isCompound(entry));
+  if (!firstRegion || !isCompound(firstRegion)) {
+    return false;
+  }
+
+  return (
+    Array.isArray(firstRegion.BlockStatePalette) &&
+    firstRegion.BlockStates !== undefined &&
+    isCompound(firstRegion.Position) &&
+    isCompound(firstRegion.Size)
+  );
+}
+
 function looksLikeStructureNbt(root: NbtCompound): boolean {
   return (
     toNumberArray(root.size)?.length === 3 &&
@@ -488,7 +644,7 @@ function toNumberArray(value: unknown): number[] | null {
   return null;
 }
 
-function parseStructurePaletteEntry(entry: unknown, index: number): string {
+function parseBlockStateEntry(entry: unknown, index: number): string {
   if (!isCompound(entry)) {
     return `unknown:${index}`;
   }
@@ -508,6 +664,97 @@ function parseStructurePaletteEntry(entry: unknown, index: number): string {
     .map(([key, value]) => `${key}=${String(value)}`);
 
   return `${name}[${propertyParts.join(",")}]`;
+}
+
+function toPositionTriplet(value: unknown): [number, number, number] | null {
+  if (!isCompound(value)) {
+    return null;
+  }
+
+  const x = toInteger(value.x);
+  const y = toInteger(value.y);
+  const z = toInteger(value.z);
+  if (x === null || y === null || z === null) {
+    return null;
+  }
+
+  return [x, y, z];
+}
+
+function toLongArray(value: unknown): bigint[] | null {
+  if (value instanceof BigInt64Array || value instanceof BigUint64Array) {
+    return Array.from(value, (entry) => BigInt.asUintN(64, entry));
+  }
+
+  if (Array.isArray(value)) {
+    const parsed: bigint[] = [];
+
+    for (const entry of value) {
+      if (typeof entry === "bigint") {
+        parsed.push(BigInt.asUintN(64, entry));
+        continue;
+      }
+
+      if (typeof entry === "number" && Number.isFinite(entry)) {
+        parsed.push(BigInt.asUintN(64, BigInt(Math.trunc(entry))));
+        continue;
+      }
+
+      return null;
+    }
+
+    return parsed;
+  }
+
+  return null;
+}
+
+function decodePackedLongArray(
+  longs: bigint[],
+  bitsPerItem: number,
+  itemCount: number,
+): number[] {
+  if (bitsPerItem <= 0 || bitsPerItem > 31) {
+    throw new Error(`Unsupported packed bit width (${bitsPerItem}).`);
+  }
+
+  const bigintOne = BigInt(1);
+  const bigintZero = BigInt(0);
+  const bigintSixtyFour = BigInt(64);
+  const bigintSix = BigInt(6);
+  const bigintSixtyThree = BigInt(63);
+  const values = new Array<number>(itemCount);
+  const mask = (bigintOne << BigInt(bitsPerItem)) - bigintOne;
+  const bitsPerItemBigInt = BigInt(bitsPerItem);
+
+  for (let index = 0; index < itemCount; index += 1) {
+    const startBit = BigInt(index) * bitsPerItemBigInt;
+    const longIndex = Number(startBit >> bigintSix);
+    const bitOffset = Number(startBit & bigintSixtyThree);
+
+    const current = longs[longIndex] ?? bigintZero;
+
+    let value: bigint;
+    if (bitOffset + bitsPerItem <= Number(bigintSixtyFour)) {
+      value = (current >> BigInt(bitOffset)) & mask;
+    } else {
+      const lowerBits = Number(bigintSixtyFour) - bitOffset;
+      const upperBits = bitsPerItem - lowerBits;
+      const next = longs[longIndex + 1] ?? bigintZero;
+      const lower = current >> BigInt(bitOffset);
+      const upperMask = (bigintOne << BigInt(upperBits)) - bigintOne;
+      const upper = next & upperMask;
+      value = lower | (upper << BigInt(lowerBits));
+    }
+
+    values[index] = Number(value);
+  }
+
+  return values;
+}
+
+function parseStructurePaletteEntry(entry: unknown, index: number): string {
+  return parseBlockStateEntry(entry, index);
 }
 
 function buildPaletteByIndex(palette: NbtCompound): Map<number, string> {

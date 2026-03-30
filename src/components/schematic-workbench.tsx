@@ -16,7 +16,7 @@ interface VoxelGroup {
   positions: [number, number, number][];
 }
 
-const ACCEPTED_EXTENSIONS = ".schem,.schematic,.nbt";
+const ACCEPTED_EXTENSIONS = ".schem,.litematic,.schematic,.nbt";
 
 export function SchematicWorkbench() {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -136,7 +136,7 @@ export function SchematicWorkbench() {
           </button>
           <p className={styles.dropHint}>or drag and drop a file here</p>
           <p className={styles.supportedFormats}>
-            Supports `.schem`, `.nbt`, and legacy `.schematic`.
+            Supports `.schem`, `.litematic`, `.nbt`, and legacy `.schematic`.
           </p>
         </section>
 
