@@ -1,11 +1,16 @@
 ﻿"use client";
 
-import { FlyControls, OrbitControls } from "@react-three/drei";
+import { FlyControls, OrbitControls, Sky } from "@react-three/drei";
 import { Canvas } from "@react-three/fiber";
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import type { ParsedSchematic } from "@/lib/schematic/parser";
 import { parseSchematicFile } from "@/lib/schematic/parser";
+import {
+  type BlockTextureSet,
+  loadTextureSet,
+  resolveTextureCandidates,
+} from "@/lib/schematic/textures";
 import styles from "./schematic-workbench.module.css";
 
 type NavigationMode = "orbit" | "fly";
@@ -296,18 +301,31 @@ function SchematicScene({
         far: Math.max(1000, maxDimension * 26),
         position: [cameraDistance, cameraHeight, cameraDistance],
       }}
+      gl={{ antialias: false, powerPreference: "high-performance" }}
       dpr={[1, 2]}
     >
-      <color attach="background" args={["#0a1020"]} />
-      <fog attach="fog" args={["#0a1020", 90, Math.max(900, maxDimension * 24)]} />
+      <color attach="background" args={["#9ecbff"]} />
+      <fog attach="fog" args={["#9ecbff", 180, Math.max(1200, maxDimension * 24)]} />
+      <Sky
+        distance={450000}
+        sunPosition={[120, 80, 40]}
+        turbidity={8}
+        rayleigh={1.6}
+        mieCoefficient={0.006}
+        mieDirectionalG={0.8}
+      />
 
-      <hemisphereLight args={["#d8ebff", "#111725", 0.95]} />
-      <ambientLight intensity={0.42} />
-      <directionalLight position={[90, 130, 60]} intensity={0.92} />
+      <hemisphereLight args={["#d7f1ff", "#89a86a", 0.68]} />
+      <ambientLight intensity={0.38} />
+      <directionalLight position={[90, 160, 60]} intensity={1.05} color="#fff2cc" />
 
       <VoxelField parsed={parsed} />
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]}>
+        <planeGeometry args={[gridSize, gridSize]} />
+        <meshStandardMaterial color="#7fad5c" roughness={1} metalness={0} />
+      </mesh>
       <gridHelper
-        args={[gridSize, gridDivisions, new THREE.Color("#2f4468"), new THREE.Color("#19263f")]}
+        args={[gridSize, gridDivisions, new THREE.Color("#79a95e"), new THREE.Color("#64904e")]}
       />
 
       {navigationMode === "orbit" ? (
@@ -345,6 +363,7 @@ function VoxelField({ parsed }: { parsed: ParsedSchematic }) {
 function VoxelGroupMesh({ group }: { group: VoxelGroup }) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const tempObject = useMemo(() => new THREE.Object3D(), []);
+  const meshMaterial = useVoxelMaterial(group.material, group.color);
 
   useLayoutEffect(() => {
     const mesh = meshRef.current;
@@ -364,9 +383,12 @@ function VoxelGroupMesh({ group }: { group: VoxelGroup }) {
   }, [group.positions, tempObject]);
 
   return (
-    <instancedMesh ref={meshRef} args={[undefined, undefined, group.positions.length]}>
+    <instancedMesh
+      ref={meshRef}
+      args={[undefined, undefined, group.positions.length]}
+      material={meshMaterial}
+    >
       <boxGeometry args={[1, 1, 1]} />
-      <meshStandardMaterial color={group.color} roughness={0.88} metalness={0.05} />
     </instancedMesh>
   );
 }
@@ -396,6 +418,65 @@ function buildVoxelGroups(parsed: ParsedSchematic): VoxelGroup[] {
   }
 
   return [...groups.values()].sort((left, right) => right.positions.length - left.positions.length);
+}
+
+function useVoxelMaterial(
+  materialName: string,
+  fallbackColor: string,
+): THREE.Material | THREE.Material[] {
+  const [material, setMaterial] = useState<THREE.Material | THREE.Material[]>(
+    () => createFallbackVoxelMaterial(fallbackColor),
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const candidates = resolveTextureCandidates(materialName);
+    if (!candidates) {
+      return;
+    }
+
+    void loadTextureSet(candidates).then((textureSet) => {
+      if (cancelled || !textureSet) {
+        return;
+      }
+
+      setMaterial(createTexturedVoxelMaterials(textureSet));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [materialName, fallbackColor]);
+
+  return material;
+}
+
+function createFallbackVoxelMaterial(color: string): THREE.MeshStandardMaterial {
+  return new THREE.MeshStandardMaterial({
+    color,
+    roughness: 0.9,
+    metalness: 0.05,
+  });
+}
+
+function createTexturedVoxelMaterials(textureSet: BlockTextureSet): THREE.Material[] {
+  const sideMaterial = createTexturedVoxelMaterial(textureSet.side);
+  const topMaterial = createTexturedVoxelMaterial(textureSet.top);
+  const bottomMaterial = createTexturedVoxelMaterial(textureSet.bottom);
+
+  return [sideMaterial, sideMaterial, topMaterial, bottomMaterial, sideMaterial, sideMaterial];
+}
+
+function createTexturedVoxelMaterial(texture: THREE.Texture): THREE.MeshStandardMaterial {
+  return new THREE.MeshStandardMaterial({
+    map: texture,
+    color: "#ffffff",
+    roughness: 0.96,
+    metalness: 0,
+    transparent: true,
+    alphaTest: 0.1,
+  });
 }
 
 

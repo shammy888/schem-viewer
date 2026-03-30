@@ -5,7 +5,7 @@ A browser-based 3D viewer for Minecraft schematic files, built with Next.js and 
 ## Features
 
 - Upload and parse `.schem`, `.litematic`, `.nbt`, and legacy `.schematic` files
-- Explore builds in full 3D with orbit or fly controls
+- Explore builds in full 3D with Minecraft-style textures, plus orbit or fly controls
 - Material list with block counts and stack totals
 - Build stats: dimensions, volume, non-air blocks, fill ratio, unique materials
 - Responsive layout for desktop and mobile
