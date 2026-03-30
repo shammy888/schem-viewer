@@ -1,0 +1,70 @@
+diff --git a/node_modules/schematic-renderer/dist/index-5bf5c778.mjs b/node_modules/schematic-renderer/dist/index-5bf5c778.mjs
+index 443f817..e34b2dd 100644
+--- a/node_modules/schematic-renderer/dist/index-5bf5c778.mjs
++++ b/node_modules/schematic-renderer/dist/index-5bf5c778.mjs
+@@ -11685,12 +11685,12 @@ Supported formats: ${C}`), await ((_e = (_d = this.options.callbacks) == null ?
+           if (Z[B] = {
+             blockName: c.name,
+             materialGroups: J,
+-            category: this.getBlockCategory(c.name)
++            category: this.getBlockCategory(c.name, c.properties)
+           }, i.length > 0) {
+             const R = await this.computeOcclusionFlags(G);
+             b.push({
+               index: B,
+-              category: this.getBlockCategory(c.name),
++              category: this.getBlockCategory(c.name, c.properties),
+               occlusionFlags: R,
+               isCubic: R === 63,
+               geometries: i
+@@ -12016,7 +12016,7 @@ Supported formats: ${C}`), await ((_e = (_d = this.options.callbacks) == null ?
+           if ((I == null ? void 0 : I.enabled) && (R[0] < I.min.x || R[0] >= I.max.x || R[1] < I.min.y || R[1] >= I.max.y || R[2] < I.min.z || R[2] >= I.max.z))
+             continue;
+           const j = Z.schematicWrapper.get_block(R[0], R[1], R[2]);
+-          j && (j.includes("sign") || j.includes("chest") || j.includes("banner")) && m.push({
++          j && (j.includes("sign") || j.includes("chest") || j.includes("banner") || j.includes("shulker_box")) && m.push({
+             x: R[0],
+             y: R[1],
+             z: R[2],
+@@ -12041,7 +12041,7 @@ Supported formats: ${C}`), await ((_e = (_d = this.options.callbacks) == null ?
+           if (M && M.length > 0)
+             for (const L of M) {
+               const P = L.position, u = Z.schematicWrapper.get_block(P[0], P[1], P[2]);
+-              u && (u.includes("sign") || u.includes("chest") || u.includes("banner")) && m.push({
++               u && (u.includes("sign") || u.includes("chest") || u.includes("banner") || u.includes("shulker_box")) && m.push({
+                 x: P[0],
+                 y: P[1],
+                 z: P[2],
+@@ -12199,19 +12199,27 @@ Supported formats: ${C}`), await ((_e = (_d = this.options.callbacks) == null ?
+       }
+       return Z;
+     }
+-    getBlockCategory(A) {
+-      return A.includes("water") || A.includes("lava") ? "water" : A.includes("glass") || A.includes("leaves") || A.includes("ice") || A === "minecraft:barrier" ? "transparent" : "solid";
++    getBlockCategory(A, Z = {}) {
++      const I = A.toLowerCase();
++      return (Z == null ? void 0 : Z.waterlogged) === "true" || I.includes("water") || I.includes("lava") ? "water" : I.includes("fire") || I.includes("glass") || I.includes("leaves") || I.includes("ice") || I === "minecraft:barrier" ? "transparent" : "solid";
+     }
+     configureMeshForCategory(A, Z) {
++      const I = (d = null) => {
++        const b = Array.isArray(A.material) ? A.material : [
++          A.material
++        ];
++        for (const W of b)
++          W && W instanceof N.Material && (W.transparent = true, W.depthWrite = false, d !== null && "opacity" in W && (W.opacity = Math.min(W.opacity ?? 1, d)), W.needsUpdate = true);
++      };
+       switch (A.castShadow = true, A.receiveShadow = true, A.frustumCulled = true, Z) {
+         case "water":
+-          A.renderOrder = 3;
++          A.renderOrder = 3, I(0.82);
+           break;
+         case "transparent":
+-          A.renderOrder = 2;
++          A.renderOrder = 2, I();
+           break;
+         case "emissive":
+-          A.renderOrder = 1;
++          A.renderOrder = 1, I();
+           break;
+         case "redstone":
+           A.userData.isDynamic = true;
