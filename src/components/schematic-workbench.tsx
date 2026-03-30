@@ -27,6 +27,12 @@ interface ViewerRenderer {
   };
   cameraManager?: {
     focusOnSchematics?: () => void;
+    setFlyControlsSettings?: (settings: {
+      keybinds?: Partial<{ up: string; down: string }>;
+    }) => void;
+  };
+  keyboardControls?: {
+    setKeybinds?: (keybinds: Partial<{ up: string; down: string }>) => void;
   };
 }
 
@@ -255,7 +261,7 @@ export function SchematicWorkbench() {
             <p>
               {navigationMode === "orbit"
                 ? "Orbit mode: drag to rotate, scroll to zoom."
-                : "Fly mode: click and drag to look, W/A/S/D + Space/C to move."}
+                : "Fly mode: click and drag to look, W/A/S/D + R/F to move."}
             </p>
           </div>
           <div className={styles.modeButtons} role="tablist" aria-label="Navigation mode">
@@ -336,6 +342,11 @@ function SchematicScene({
           return;
         }
 
+        let resolveReady: (() => void) | null = null;
+        const readyPromise = new Promise<void>((resolve) => {
+          resolveReady = resolve;
+        });
+
         const renderer = new rendererModule.SchematicRenderer(canvas, {}, {}, {
           enableDragAndDrop: false,
           singleSchematicMode: true,
@@ -346,11 +357,29 @@ function SchematicScene({
           idleFPS: 30,
           enableAdaptiveFPS: true,
           sidebarOptions: { enabled: false },
+          keyboardControlsOptions: {
+            keybinds: {
+              up: "KeyR",
+              down: "KeyF",
+            },
+          },
+          callbacks: {
+            onRendererInitialized: () => {
+              resolveReady?.();
+            },
+          },
         });
 
         rendererRef.current = renderer;
+        await waitForRendererInitialization(readyPromise, 20000);
 
-        await renderer.schematicManager?.loadSchematic(
+        if (!renderer.schematicManager) {
+          throw new Error("Renderer did not finish initialization.");
+        }
+
+        applyFlyKeybinds(renderer);
+
+        await renderer.schematicManager.loadSchematic(
           source.fileName,
           source.bytes.slice(0),
           { focused: true },
@@ -396,8 +425,24 @@ function SchematicScene({
       return;
     }
 
+    applyFlyKeybinds(renderer);
     applyCameraMode(renderer, navigationMode);
   }, [navigationMode, source.id]);
+
+  useEffect(() => {
+    if (navigationMode !== "fly") {
+      return;
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.code === "Space") {
+        event.preventDefault();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown, { passive: false });
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [navigationMode]);
 
   return (
     <div
@@ -428,6 +473,37 @@ function SchematicScene({
 
 function applyCameraMode(renderer: ViewerRenderer, navigationMode: NavigationMode) {
   renderer.setCameraMode(navigationMode === "fly" ? "perspective_fpv" : "perspective");
+}
+
+function applyFlyKeybinds(renderer: ViewerRenderer) {
+  renderer.cameraManager?.setFlyControlsSettings?.({
+    keybinds: {
+      up: "KeyR",
+      down: "KeyF",
+    },
+  });
+  renderer.keyboardControls?.setKeybinds?.({
+    up: "KeyR",
+    down: "KeyF",
+  });
+}
+
+async function waitForRendererInitialization(readyPromise: Promise<void>, timeoutMs: number) {
+  let timeoutId: number | null = null;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = window.setTimeout(() => {
+      reject(new Error("Renderer initialization timed out. Please try again."));
+    }, timeoutMs);
+  });
+
+  try {
+    await Promise.race([readyPromise, timeoutPromise]);
+  } finally {
+    if (timeoutId !== null) {
+      window.clearTimeout(timeoutId);
+    }
+  }
 }
 
 function getViewerErrorMessage(renderError: unknown): string {
