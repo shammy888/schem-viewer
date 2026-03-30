@@ -242,9 +242,57 @@
   min-height: min(75dvh, 840px);
   border-radius: 16px;
   overflow: hidden;
+  position: relative;
   border: 1px solid rgba(132, 172, 233, 0.28);
   background: radial-gradient(circle at top, #1f324f, #0b1324 52%, #070d19);
   box-shadow: inset 0 0 0 1px rgba(132, 173, 233, 0.12);
+}
+
+.rendererHost {
+  position: relative;
+  width: 100%;
+  height: min(75dvh, 840px);
+}
+
+.viewerCanvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.viewerOverlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  background: rgba(5, 12, 24, 0.62);
+  color: #d8e9ff;
+  text-align: center;
+  font-size: 0.95rem;
+  padding: 1.25rem;
+}
+
+.viewerError {
+  position: absolute;
+  left: 1rem;
+  right: 1rem;
+  bottom: 1rem;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 137, 137, 0.42);
+  background: rgba(73, 27, 27, 0.84);
+  color: #ffd7d7;
+  padding: 0.75rem 0.85rem;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.viewerError h3 {
+  font-size: 0.95rem;
+}
+
+.viewerError p {
+  font-size: 0.82rem;
+  color: rgba(255, 220, 220, 0.95);
 }
 
 .placeholder {
@@ -301,6 +349,10 @@
 
   .canvasCard {
     min-height: 58dvh;
+  }
+
+  .rendererHost {
+    height: 58dvh;
   }
 
   .placeholder {

@@ -1,24 +1,42 @@
-﻿"use client";
+"use client";
 
-import { FlyControls, OrbitControls, Sky } from "@react-three/drei";
-import { Canvas } from "@react-three/fiber";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import * as THREE from "three";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ParsedSchematic } from "@/lib/schematic/parser";
 import { parseSchematicFile } from "@/lib/schematic/parser";
-import {
-  type BlockTextureSet,
-  loadTextureSet,
-  resolveTextureCandidates,
-} from "@/lib/schematic/textures";
 import styles from "./schematic-workbench.module.css";
 
 type NavigationMode = "orbit" | "fly";
+type CameraMode = "perspective" | "isometric" | "perspective_fpv";
 
-interface VoxelGroup {
-  material: string;
-  color: string;
-  positions: [number, number, number][];
+interface UploadedSchematicSource {
+  id: string;
+  fileName: string;
+  bytes: ArrayBuffer;
+}
+
+interface ViewerRenderer {
+  dispose: () => void;
+  setCameraMode: (mode: CameraMode) => void;
+  schematicManager?: {
+    loadSchematic: (
+      name: string,
+      schematicData: ArrayBuffer,
+      properties?: Partial<{ focused: boolean }>,
+    ) => Promise<void>;
+    removeAllSchematics?: () => Promise<void>;
+  };
+  cameraManager?: {
+    focusOnSchematics?: () => void;
+  };
+}
+
+interface SchematicRendererModule {
+  SchematicRenderer: new (
+    canvas: HTMLCanvasElement,
+    schematicData?: { [key: string]: () => Promise<ArrayBuffer> },
+    defaultResourcePacks?: Record<string, () => Promise<Blob>>,
+    options?: Record<string, unknown>,
+  ) => ViewerRenderer;
 }
 
 const ACCEPTED_EXTENSIONS = ".schem,.litematic,.schematic,.nbt";
@@ -26,6 +44,7 @@ const ACCEPTED_EXTENSIONS = ".schem,.litematic,.schematic,.nbt";
 export function SchematicWorkbench() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [parsed, setParsed] = useState<ParsedSchematic | null>(null);
+  const [source, setSource] = useState<UploadedSchematicSource | null>(null);
   const [navigationMode, setNavigationMode] = useState<NavigationMode>("orbit");
   const [isDragging, setIsDragging] = useState(false);
   const [isParsing, setIsParsing] = useState(false);
@@ -57,8 +76,15 @@ export function SchematicWorkbench() {
     setError(null);
 
     try {
-      const result = await parseSchematicFile(file);
+      const fileBytes = await file.arrayBuffer();
+      const parseFile = new File([fileBytes], file.name, { type: file.type });
+      const result = await parseSchematicFile(parseFile);
       setParsed(result);
+      setSource({
+        id: `${file.name}:${file.lastModified}:${Date.now()}`,
+        fileName: file.name,
+        bytes: fileBytes,
+      });
       setMaterialFilter("");
     } catch (parseError) {
       const message =
@@ -66,6 +92,7 @@ export function SchematicWorkbench() {
           ? parseError.message
           : "Something went wrong while reading this schematic.";
       setParsed(null);
+      setSource(null);
       setError(message);
     } finally {
       setIsParsing(false);
@@ -250,8 +277,8 @@ export function SchematicWorkbench() {
         </header>
 
         <section className={styles.canvasCard}>
-          {parsed ? (
-            <SchematicScene parsed={parsed} navigationMode={navigationMode} />
+          {parsed && source ? (
+            <SchematicScene parsed={parsed} source={source} navigationMode={navigationMode} />
           ) : (
             <div className={styles.placeholder}>
               <h3>Upload a schematic to start exploring</h3>
@@ -277,206 +304,140 @@ export function SchematicWorkbench() {
 
 function SchematicScene({
   parsed,
+  source,
   navigationMode,
 }: {
   parsed: ParsedSchematic;
+  source: UploadedSchematicSource;
   navigationMode: NavigationMode;
 }) {
-  const maxDimension = Math.max(
-    parsed.dimensions.width,
-    parsed.dimensions.height,
-    parsed.dimensions.length,
-  );
-  const gridSize = Math.max(18, Math.ceil(maxDimension * 2.4));
-  const gridDivisions = Math.max(18, Math.min(420, Math.round(gridSize)));
-  const cameraDistance = Math.max(14, maxDimension * 1.75);
-  const cameraHeight = Math.max(8, parsed.dimensions.height * 1.15);
-
-  return (
-    <Canvas
-      key={`${parsed.fileName}:${parsed.blockCount}:${parsed.volume}`}
-      camera={{
-        fov: 58,
-        near: 0.1,
-        far: Math.max(1000, maxDimension * 26),
-        position: [cameraDistance, cameraHeight, cameraDistance],
-      }}
-      gl={{ antialias: false, powerPreference: "high-performance" }}
-      dpr={[1, 2]}
-    >
-      <color attach="background" args={["#9ecbff"]} />
-      <fog attach="fog" args={["#9ecbff", 180, Math.max(1200, maxDimension * 24)]} />
-      <Sky
-        distance={450000}
-        sunPosition={[120, 80, 40]}
-        turbidity={8}
-        rayleigh={1.6}
-        mieCoefficient={0.006}
-        mieDirectionalG={0.8}
-      />
-
-      <hemisphereLight args={["#d7f1ff", "#89a86a", 0.68]} />
-      <ambientLight intensity={0.38} />
-      <directionalLight position={[90, 160, 60]} intensity={1.05} color="#fff2cc" />
-
-      <VoxelField parsed={parsed} />
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]}>
-        <planeGeometry args={[gridSize, gridSize]} />
-        <meshStandardMaterial color="#7fad5c" roughness={1} metalness={0} />
-      </mesh>
-      <gridHelper
-        args={[gridSize, gridDivisions, new THREE.Color("#79a95e"), new THREE.Color("#64904e")]}
-      />
-
-      {navigationMode === "orbit" ? (
-        <OrbitControls
-          makeDefault
-          target={[0, parsed.dimensions.height * 0.45, 0]}
-          enableDamping
-          dampingFactor={0.06}
-          maxDistance={Math.max(30, maxDimension * 8)}
-        />
-      ) : (
-        <FlyControls
-          makeDefault
-          dragToLook
-          movementSpeed={Math.max(8, maxDimension * 0.6)}
-          rollSpeed={0.7}
-        />
-      )}
-    </Canvas>
-  );
-}
-
-function VoxelField({ parsed }: { parsed: ParsedSchematic }) {
-  const groupedVoxels = useMemo(() => buildVoxelGroups(parsed), [parsed]);
-
-  return (
-    <group>
-      {groupedVoxels.map((group) => (
-        <VoxelGroupMesh key={group.material} group={group} />
-      ))}
-    </group>
-  );
-}
-
-function VoxelGroupMesh({ group }: { group: VoxelGroup }) {
-  const meshRef = useRef<THREE.InstancedMesh>(null);
-  const tempObject = useMemo(() => new THREE.Object3D(), []);
-  const meshMaterial = useVoxelMaterial(group.material, group.color);
-
-  useLayoutEffect(() => {
-    const mesh = meshRef.current;
-    if (!mesh) {
-      return;
-    }
-
-    for (let index = 0; index < group.positions.length; index += 1) {
-      const [x, y, z] = group.positions[index];
-      tempObject.position.set(x, y, z);
-      tempObject.updateMatrix();
-      mesh.setMatrixAt(index, tempObject.matrix);
-    }
-
-    mesh.instanceMatrix.needsUpdate = true;
-    mesh.computeBoundingSphere();
-  }, [group.positions, tempObject]);
-
-  return (
-    <instancedMesh
-      ref={meshRef}
-      args={[undefined, undefined, group.positions.length]}
-      material={meshMaterial}
-    >
-      <boxGeometry args={[1, 1, 1]} />
-    </instancedMesh>
-  );
-}
-
-function buildVoxelGroups(parsed: ParsedSchematic): VoxelGroup[] {
-  const xOffset = parsed.dimensions.width / 2;
-  const zOffset = parsed.dimensions.length / 2;
-  const materialColors = new Map(parsed.materials.map((entry) => [entry.material, entry.color]));
-  const groups = new Map<string, VoxelGroup>();
-
-  for (const voxel of parsed.voxels) {
-    let group = groups.get(voxel.material);
-    if (!group) {
-      group = {
-        material: voxel.material,
-        color: materialColors.get(voxel.material) ?? "#888888",
-        positions: [],
-      };
-      groups.set(voxel.material, group);
-    }
-
-    group.positions.push([
-      voxel.x - xOffset + 0.5,
-      voxel.y + 0.5,
-      voxel.z - zOffset + 0.5,
-    ]);
-  }
-
-  return [...groups.values()].sort((left, right) => right.positions.length - left.positions.length);
-}
-
-function useVoxelMaterial(
-  materialName: string,
-  fallbackColor: string,
-): THREE.Material | THREE.Material[] {
-  const [material, setMaterial] = useState<THREE.Material | THREE.Material[]>(
-    () => createFallbackVoxelMaterial(fallbackColor),
-  );
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const rendererRef = useRef<ViewerRenderer | null>(null);
+  const [viewerError, setViewerError] = useState<string | null>(null);
+  const [isViewerLoading, setIsViewerLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
 
-    const candidates = resolveTextureCandidates(materialName);
-    if (!candidates) {
-      return;
-    }
-
-    void loadTextureSet(candidates).then((textureSet) => {
-      if (cancelled || !textureSet) {
+    const initializeRenderer = async () => {
+      const canvas = canvasRef.current;
+      if (!canvas) {
+        setIsViewerLoading(false);
         return;
       }
 
-      setMaterial(createTexturedVoxelMaterials(textureSet));
-    });
+      setViewerError(null);
+      setIsViewerLoading(true);
+
+      try {
+        const rendererModule = (await import("schematic-renderer")) as SchematicRendererModule;
+
+        if (cancelled) {
+          return;
+        }
+
+        const renderer = new rendererModule.SchematicRenderer(canvas, {}, {}, {
+          enableDragAndDrop: false,
+          singleSchematicMode: true,
+          enableProgressBar: false,
+          showGrid: true,
+          showAxes: false,
+          targetFPS: 60,
+          idleFPS: 30,
+          enableAdaptiveFPS: true,
+          sidebarOptions: { enabled: false },
+        });
+
+        rendererRef.current = renderer;
+
+        await renderer.schematicManager?.loadSchematic(
+          source.fileName,
+          source.bytes.slice(0),
+          { focused: true },
+        );
+
+        if (cancelled) {
+          return;
+        }
+
+        renderer.cameraManager?.focusOnSchematics?.();
+        setIsViewerLoading(false);
+      } catch (renderError) {
+        if (cancelled) {
+          return;
+        }
+
+        rendererRef.current?.dispose();
+        rendererRef.current = null;
+        setIsViewerLoading(false);
+        setViewerError(getViewerErrorMessage(renderError));
+      }
+    };
+
+    void initializeRenderer();
 
     return () => {
       cancelled = true;
+      const renderer = rendererRef.current;
+      rendererRef.current = null;
+
+      if (!renderer) {
+        return;
+      }
+
+      void renderer.schematicManager?.removeAllSchematics?.().catch(() => undefined);
+      renderer.dispose();
     };
-  }, [materialName, fallbackColor]);
+  }, [source.id, source.fileName, source.bytes]);
 
-  return material;
+  useEffect(() => {
+    const renderer = rendererRef.current;
+    if (!renderer) {
+      return;
+    }
+
+    applyCameraMode(renderer, navigationMode);
+  }, [navigationMode, source.id]);
+
+  return (
+    <div
+      key={`${parsed.fileName}:${parsed.blockCount}:${parsed.volume}:${source.id}`}
+      className={styles.rendererHost}
+    >
+      <canvas ref={canvasRef} className={styles.viewerCanvas} />
+
+      {isViewerLoading ? (
+        <div className={styles.viewerOverlay}>
+          <p>Loading full 3D Minecraft block models...</p>
+        </div>
+      ) : null}
+
+      {viewerError ? (
+        <div className={styles.viewerError}>
+          <h3>3D renderer failed</h3>
+          <p>{viewerError}</p>
+          <p>
+            Stats and materials are still available. Try another file if this one uses unsupported
+            metadata.
+          </p>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
-function createFallbackVoxelMaterial(color: string): THREE.MeshStandardMaterial {
-  return new THREE.MeshStandardMaterial({
-    color,
-    roughness: 0.9,
-    metalness: 0.05,
-  });
+function applyCameraMode(renderer: ViewerRenderer, navigationMode: NavigationMode) {
+  renderer.setCameraMode(navigationMode === "fly" ? "perspective_fpv" : "perspective");
 }
 
-function createTexturedVoxelMaterials(textureSet: BlockTextureSet): THREE.Material[] {
-  const sideMaterial = createTexturedVoxelMaterial(textureSet.side);
-  const topMaterial = createTexturedVoxelMaterial(textureSet.top);
-  const bottomMaterial = createTexturedVoxelMaterial(textureSet.bottom);
+function getViewerErrorMessage(renderError: unknown): string {
+  if (renderError instanceof Error && renderError.message.trim().length > 0) {
+    return renderError.message;
+  }
 
-  return [sideMaterial, sideMaterial, topMaterial, bottomMaterial, sideMaterial, sideMaterial];
+  if (typeof renderError === "string" && renderError.trim().length > 0) {
+    return renderError;
+  }
+
+  return "Unknown rendering error while loading this schematic.";
 }
-
-function createTexturedVoxelMaterial(texture: THREE.Texture): THREE.MeshStandardMaterial {
-  return new THREE.MeshStandardMaterial({
-    map: texture,
-    color: "#ffffff",
-    roughness: 0.96,
-    metalness: 0,
-    transparent: true,
-    alphaTest: 0.1,
-  });
-}
-
-
