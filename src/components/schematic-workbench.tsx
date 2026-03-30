@@ -46,6 +46,15 @@ interface SchematicRendererModule {
 }
 
 const ACCEPTED_EXTENSIONS = ".schem,.litematic,.schematic,.nbt";
+const DEFAULT_RESOURCE_PACKS: Record<string, () => Promise<Blob>> = {
+  "minecraft-default-v2": async () => {
+    const response = await fetch("/resourcepacks/minecraft-default-pack.zip");
+    if (!response.ok) {
+      throw new Error(`Failed to load default resource pack (${response.status}).`);
+    }
+    return response.blob();
+  },
+};
 
 export function SchematicWorkbench() {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -347,7 +356,7 @@ function SchematicScene({
           resolveReady = resolve;
         });
 
-        const renderer = new rendererModule.SchematicRenderer(canvas, {}, {}, {
+        const renderer = new rendererModule.SchematicRenderer(canvas, {}, DEFAULT_RESOURCE_PACKS, {
           enableDragAndDrop: false,
           singleSchematicMode: true,
           enableProgressBar: false,
