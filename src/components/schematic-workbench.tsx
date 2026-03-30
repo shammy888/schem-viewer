@@ -255,7 +255,7 @@ export function SchematicWorkbench() {
             <p>
               {navigationMode === "orbit"
                 ? "Orbit mode: drag to rotate, scroll to zoom."
-                : "Fly mode: click and drag to look, W/A/S/D + R/F to move."}
+                : "Fly mode: click and drag to look, W/A/S/D + Space/C to move."}
             </p>
           </div>
           <div className={styles.modeButtons} role="tablist" aria-label="Navigation mode">
